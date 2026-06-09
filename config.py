@@ -49,9 +49,14 @@ class OracleLBreIConfig:
     lam: float = 3.8
     mu: float = 1.0
     num_iters: int = 109200
-    step_rule: str = "constant"
-    step_c0: float = 0.02
+    step_rule: str = "constant"          # deprecated — Polyak step is used by default
+    step_c0: float = 0.02                # deprecated — Polyak step is used by default
     record_every: int = 1
+
+    # Exact-gradient Polyak step parameters.
+    beta: float = 1.0
+    f_star: float = 0.0
+    eps_denom: float = 1e-12
 
 
 @dataclass
@@ -128,6 +133,7 @@ def get_experiment_config(exp_name: str) -> ExperimentConfig:
         cfg.AFLBreI.num_iters = 2600
         cfg.AFLBreI.batch_size = 32
         cfg.AFLBreI.beta = 0.99
+        cfg.oracle.beta = 0.99
         cfg.oracle.num_iters = 106600
         cfg.sgdas.num_iters = 53300
         cfg.rd.num_iters = 53300

@@ -299,6 +299,16 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
 
 
 def run_oracle_lbrei(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
+    """
+    Oracle Linearized Bregman Iteration with exact-gradient Polyak step.
+
+    Uses the true gradient g_k = A^T(A x_k - b) and the exact least-squares
+    objective value to form the Polyak step:
+
+        t_k = beta * mu * delta_k / ||g_k||^2
+
+    where delta_k = 0.5 * ||A x_k - b||^2 (assuming f* = 0).
+    """
     n = x_true.shape[0]
     x = np.zeros(n)
     z = np.zeros(n)
@@ -310,11 +320,14 @@ def run_oracle_lbrei(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
     t0 = time.perf_counter()
 
     for k in range(cfg.num_iters):
-        step = get_stepsize(k, cfg.step_rule, cfg.step_c0)
-
         residual = operator.forward(x) - b
         grad = operator.adjoint(residual)
         cumulative_forward_calls += 1
+
+        # Exact-gradient Polyak step.
+        delta_k = least_squares_objective_from_residual(residual)
+        grad_norm_sq = float(np.dot(grad, grad))
+        step = cfg.beta * cfg.mu * max(delta_k - cfg.f_star, 0.0) / max(grad_norm_sq, cfg.eps_denom)
 
         z = z - step * grad
         x = elastic_net_mirror_map(z, lam=cfg.lam, mu=cfg.mu)
@@ -338,6 +351,7 @@ def run_oracle_lbrei(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
                 safe_step_ref=np.nan,
                 objective=f_eval,
                 gap=f_eval,
+                grad_norm_sq=grad_norm_sq,
                 true_mask=true_mask,
                 x_true_norm=x_true_norm,
             )

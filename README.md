@@ -37,7 +37,7 @@ Current configuration:
 - Problem: Gaussian synthetic sparse recovery, `m=600`, `n=1200`, sparsity `s=20`, `snr_db=40`, normalized columns, `num_trials=10`, `support_tol=1e-2`.
 - AFLBreI: `lambda=3.8`, `mu=1.0`, `K=2600`, update batch `B=32`, probe batch `M=8`, `beta=0.99`, Gaussian directions, `f_star=0`, `clip_step=False`, `growing_batch=False`, `return_average=False`, `record_every=1`.
 - Forward-call budget: AFLBreI uses approximately `2600 * (1 + 32 + 8) = 106600` forward calls.
-- Baselines: Oracle-LBreI uses `K=106600`, `lambda=3.8`, `step_c0=0.02`, `record_every=1`; SGDAS and RD use `K=53300`, `record_every=1`, matching the same forward-call budget because they use about two forward calls per iteration.
+- Baselines: Oracle-LBreI uses `K=106600`, `lambda=3.8`, `beta=0.99`, exact-gradient Polyak step, `record_every=1`; SGDAS and RD use `K=53300`, `record_every=1`, matching the same forward-call budget because they use about two forward calls per iteration.
 
 ```bash
 python main.py --exp ablation_batch
@@ -119,7 +119,7 @@ Single CS-MRI reconstruction experiment. Compares AFLBreI and Oracle-LBreI on on
 Current configuration:
 - Problem: Shepp-Logan CS-MRI, `img_size=128`, radial rays `30`, Haar wavelet, `snr_db=40`, `num_trials=1`.
 - AFLBreI: `lambda=1.0`, `K=30000`, update batch `B=128`, probe batch `M=32`, `beta=1.0`, `record_every=500`.
-- Oracle-LBreI: `lambda=1.0`, `K=20000`, `record_every=1`.
+- Oracle-LBreI: `lambda=1.0`, `K=20000`, `beta=1.0`, exact-gradient Polyak step, `record_every=1`.
 
 ```bash
 python main.py --exp csmri_sampling_sweep
@@ -130,7 +130,7 @@ Current configuration:
 - Problem: Shepp-Logan CS-MRI, `img_size=128`, Haar wavelet, `snr_db=40`, `num_trials=3`.
 - Varied parameter: radial rays `rays in {16, 24, 30, 40}`.
 - AFLBreI: `lambda=1.0`, `K=20000`, update batch `B=100`, probe batch `M=16`, `beta=1.0`, `record_every=500`.
-- Oracle-LBreI: `lambda=1.0`, `K=20000`, `record_every=1`.
+- Oracle-LBreI: `lambda=1.0`, `K=20000`, `beta=1.0`, exact-gradient Polyak step, `record_every=1`.
 
 ```bash
 python main.py --exp csmri_noise_sweep
@@ -141,7 +141,7 @@ Current configuration:
 - Problem: Shepp-Logan CS-MRI, `img_size=128`, radial rays `30`, Haar wavelet, `num_trials=3`.
 - Varied parameter: `snr_db in {20, 30, 40, None}`, where `None` is noiseless.
 - AFLBreI: `lambda=1.0`, `K=20000`, update batch `B=100`, probe batch `M=16`, `beta=1.0`, `record_every=500`.
-- Oracle-LBreI: `lambda=1.0`, `K=20000`, `record_every=1`.
+- Oracle-LBreI: `lambda=1.0`, `K=20000`, `beta=1.0`, exact-gradient Polyak step, `record_every=1`.
 
 ```bash
 python main.py --exp deconv_compare
@@ -152,5 +152,5 @@ Current configuration:
 - Problem: 1D sparse deconvolution, `n=1024`, sparsity `s=30`, Gaussian blur kernel size `31`, `blur_sigma=3.0`, `snr_db=40`, Gaussian signal amplitudes, `num_trials=10`, `support_tol=1e-1`.
 - AFLBreI: `lambda=10`, `K=20000`, final update batch `B_K=256`, initial update batch about `0.5 B_K`, probe batch lower bound `M=64`, `probe_batch_ratio=0.5`, `beta=1.0`, `f_star=0`, `record_every=10`.
 - AFLBreI stability/schedule: `step_safety=0.75`, `clip_step=True`, `growing_batch=True`, `grow_probe_with_batch=True`.
-- Oracle-LBreI: `lambda=675`, `step_c0=1`, `K=160000`, `record_every=1`.
+- Oracle-LBreI: `lambda=675`, `beta=1.0`, exact-gradient Polyak step, `K=160000`, `record_every=1`.
 - SGDAS and RD: `K=10`, `record_every=1`.
