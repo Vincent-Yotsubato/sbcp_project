@@ -62,7 +62,7 @@ class OracleLBreIConfig:
 @dataclass
 class SGDASConfig:
     num_iters: int = 54600
-    sampler: str = "rademacher"
+    sampler: str = "gaussian"
     step_rule: str = "inv_sqrt"
     step_c0: float = 0.02
     step_power: float = 0.5
@@ -72,7 +72,7 @@ class SGDASConfig:
 @dataclass
 class RDConfig:
     num_iters: int = 54600
-    sampler: str = "rademacher"
+    sampler: str = "gaussian"
     record_every: int = 1
 
 
