@@ -1,6 +1,15 @@
 import argparse
 import os
 
+
+for _thread_env in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "1")
+
 import matplotlib.pyplot as plt
 
 from config import get_experiment_config, config_to_dict

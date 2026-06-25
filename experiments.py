@@ -3,6 +3,15 @@ import copy
 import os
 from concurrent.futures import ProcessPoolExecutor
 
+
+for _thread_env in (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_thread_env, "1")
+
 import numpy as np
 
 from algorithms import (

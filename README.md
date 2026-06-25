@@ -39,6 +39,7 @@ python main.py --exp main_compare --workers auto
 ```
 
 `--workers auto` caps process parallelism conservatively; use `--workers 1` for serial runs.
+The code also limits BLAS worker threads by default, so process-level parallelism does not oversubscribe the CPU.
 Main sparse recovery comparison. Compares AFLBreI with Oracle-LBreI, SGDAS, and RD on the default synthetic sparse inverse problem.
 
 Current configuration:
