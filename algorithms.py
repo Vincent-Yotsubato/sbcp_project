@@ -4,8 +4,7 @@ import numpy as np
 
 from estimators import (
     sample_isotropic_vector,
-    estimate_gradient_batch,
-    estimate_q_from_residual,
+    estimate_gradient_and_q_batch,
 )
 from metrics import compute_all_metrics
 from regularizers import elastic_net_mirror_map
@@ -189,6 +188,8 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
     batch_floor_fraction = getattr(cfg, "batch_floor_fraction", 0.5)
     grow_probe_with_batch = getattr(cfg, "grow_probe_with_batch", False)
     probe_batch_ratio = getattr(cfg, "probe_batch_ratio", 1.0)
+    clip_step = getattr(cfg, "clip_step", False)
+    safe_step_cache = {}
 
     def current_batch_size(k: int) -> int:
         if not use_growing_batch:
@@ -201,6 +202,17 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
         if not grow_probe_with_batch:
             return cfg.q_batch_size
         return max(cfg.q_batch_size, int(np.ceil(probe_batch_ratio * B_k)))
+
+    def get_safe_step_ref(B_k: int) -> float:
+        if B_k not in safe_step_cache:
+            safe_step_cache[B_k] = theory_safe_step(
+                operator=operator,
+                n=n,
+                sampler=cfg.sampler,
+                B=B_k,
+                rho=cfg.step_safety,
+            )
+        return safe_step_cache[B_k]
 
     if verbose:
         print("[AFLBreI]")
@@ -216,20 +228,15 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
     for k in range(cfg.num_iters):
         B_k = current_batch_size(k)
         M_k = current_probe_batch_size(B_k)
+        should_record = (k % cfg.record_every) == 0
         cB = batch_curvature_factor(n=n, sampler=cfg.sampler, B=B_k)
-        safe_step_ref = theory_safe_step(
-            operator=operator,
-            n=n,
-            sampler=cfg.sampler,
-            B=B_k,
-            rho=cfg.step_safety,
-        )
 
-        g_hat, residual, used_calls = estimate_gradient_batch(
+        g_hat, residual, q_hat, used_calls = estimate_gradient_and_q_batch(
             operator=operator,
             x=x,
             b=b,
-            batch_size=B_k,
+            update_batch_size=B_k,
+            probe_batch_size=M_k,
             sampler=cfg.sampler,
         )
         cumulative_forward_calls += used_calls
@@ -237,27 +244,19 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
         f_x = least_squares_objective_from_residual(residual)
         gap = max(f_x - cfg.f_star, cfg.eps_gap)
 
-        q_hat, q_calls = estimate_q_from_residual(
-            operator=operator,
-            residual=residual,
-            n=n,
-            batch_size=M_k,
-            sampler=cfg.sampler,
-        )
-        cumulative_forward_calls += q_calls
-
         raw_step = cfg.beta * (cfg.mu * gap) / (cB * max(q_hat, cfg.eps_denom))
-        if getattr(cfg, "clip_step", False):
+        safe_step_ref = get_safe_step_ref(B_k) if clip_step or should_record else None
+        if clip_step:
             step = min(raw_step, safe_step_ref)
         else:
             step = raw_step
-        was_clipped = raw_step > safe_step_ref
+        was_clipped = False if safe_step_ref is None else raw_step > safe_step_ref
 
         z = z - step * g_hat
         x = elastic_net_mirror_map(z, lam=cfg.lam, mu=cfg.mu)
         x_sum += x
 
-        if (k % cfg.record_every) == 0:
+        if should_record:
             elapsed = time.perf_counter() - t0
 
             if getattr(cfg, "return_average", False):
@@ -273,6 +272,10 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
                 residual_eval = residual
                 f_eval = f_x
                 gap_eval = max(f_x - cfg.f_star, 0.0)
+
+            if safe_step_ref is None:
+                safe_step_ref = get_safe_step_ref(B_k)
+            was_clipped = raw_step > safe_step_ref
 
             append_history(
                 history,

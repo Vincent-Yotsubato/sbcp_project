@@ -46,6 +46,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp", type=str, default="main_compare")
     parser.add_argument("--outdir", type=str, default="results")
+    parser.add_argument(
+        "--workers",
+        type=str,
+        default="auto",
+        help="Number of worker processes for independent trials: auto, 1, or N.",
+    )
     return parser.parse_args()
 
 
@@ -112,8 +118,8 @@ def save_summary(raw_dir, filename, cfg, summary):
     )
 
 
-def run_main_compare_command(cfg, raw_dir, fig_dir):
-    result = run_main_compare(cfg)
+def run_main_compare_command(cfg, raw_dir, fig_dir, workers):
+    result = run_main_compare(cfg, workers=workers)
     save_summary(raw_dir, "main_compare.json", cfg, result["summary"])
 
     summary = result["summary"]
@@ -188,21 +194,21 @@ def run_main_compare_command(cfg, raw_dir, fig_dir):
     save_best_f1_vectors(result, raw_dir)
 
 
-def run_ablation_command(cfg, raw_dir, fig_dir, kind):
+def run_ablation_command(cfg, raw_dir, fig_dir, kind, workers):
     if kind == "batch":
-        result = run_batch_ablation(cfg, max_budget=136000)
+        result = run_batch_ablation(cfg, max_budget=136000, workers=workers)
         filename = "ablation_batch.json"
         title = "Batch Size Ablation"
         prefix = "ablation_batch"
         plot_budget = 136000
     elif kind == "probe":
-        result = run_probe_ablation(cfg, max_budget=136000)
+        result = run_probe_ablation(cfg, max_budget=136000, workers=workers)
         filename = "ablation_probe.json"
         title = "Probe Batch Size Ablation"
         prefix = "ablation_probe"
         plot_budget = 136000
     else:
-        result = run_stepsize_ablation(cfg)
+        result = run_stepsize_ablation(cfg, workers=workers)
         filename = "ablation_stepsize.json"
         title = "AFLBreI Beta Ablation"
         prefix = "ablation_stepsize"
@@ -245,8 +251,8 @@ def run_ablation_command(cfg, raw_dir, fig_dir, kind):
         )
 
 
-def run_sparsity_command(cfg, raw_dir, fig_dir):
-    result = run_sparsity_scaling_experiment(cfg)
+def run_sparsity_command(cfg, raw_dir, fig_dir, workers):
+    result = run_sparsity_scaling_experiment(cfg, workers=workers)
     save_summary(raw_dir, "sparsity_scaling.json", cfg, result)
 
     plot_ablation_curves(
@@ -273,8 +279,12 @@ def run_sparsity_command(cfg, raw_dir, fig_dir):
     )
 
 
-def run_noise_command(cfg, raw_dir, fig_dir):
-    result = run_noise_robustness_experiment(cfg, snr_levels=(20, 30, 40, None))
+def run_noise_command(cfg, raw_dir, fig_dir, workers):
+    result = run_noise_robustness_experiment(
+        cfg,
+        snr_levels=(20, 30, 40, None),
+        workers=workers,
+    )
     save_summary(raw_dir, "noise_robustness.json", cfg, result)
 
     for name, stats in result.items():
@@ -300,8 +310,8 @@ def run_noise_command(cfg, raw_dir, fig_dir):
     )
 
 
-def run_growing_batch_kkt_command(cfg, raw_dir, fig_dir):
-    result = run_growing_batch_kkt_experiment(cfg)
+def run_growing_batch_kkt_command(cfg, raw_dir, fig_dir, workers):
+    result = run_growing_batch_kkt_experiment(cfg, workers=workers)
     save_summary(raw_dir, "growing_batch_kkt.json", cfg, result)
 
     relative_violations = result.get("relative_dual_range_violation_mean")
@@ -370,13 +380,21 @@ def run_csmri_compare_command(cfg, raw_dir, fig_dir):
     )
 
 
-def run_csmri_sweep_command(cfg, raw_dir, fig_dir, kind):
+def run_csmri_sweep_command(cfg, raw_dir, fig_dir, kind, workers):
     if kind == "sampling":
-        result = run_csmri_sampling_sweep(cfg, rays_list=cfg.csmri_sweep.rays_list)
+        result = run_csmri_sampling_sweep(
+            cfg,
+            rays_list=cfg.csmri_sweep.rays_list,
+            workers=workers,
+        )
         filename = "csmri_sampling_sweep.json"
         prefix = "csmri_sampling"
     else:
-        result = run_csmri_noise_sweep(cfg, snr_list=cfg.csmri_sweep.snr_list)
+        result = run_csmri_noise_sweep(
+            cfg,
+            snr_list=cfg.csmri_sweep.snr_list,
+            workers=workers,
+        )
         filename = "csmri_noise_sweep.json"
         prefix = "csmri_noise"
 
@@ -404,8 +422,8 @@ def run_csmri_sweep_command(cfg, raw_dir, fig_dir, kind):
         print()
 
 
-def run_deconv_command(cfg, raw_dir, fig_dir):
-    result = run_deconv_compare(cfg)
+def run_deconv_command(cfg, raw_dir, fig_dir, workers):
+    result = run_deconv_compare(cfg, workers=workers)
     save_summary(raw_dir, "deconv_compare.json", cfg, result["summary"])
 
     summary = result["summary"]
@@ -454,27 +472,45 @@ def main():
     ensure_dir(fig_dir)
 
     if args.exp == "main_compare":
-        run_main_compare_command(cfg, raw_dir, fig_dir)
+        run_main_compare_command(cfg, raw_dir, fig_dir, args.workers)
     elif args.exp == "ablation_batch":
-        run_ablation_command(cfg, raw_dir, fig_dir, kind="batch")
+        run_ablation_command(cfg, raw_dir, fig_dir, kind="batch", workers=args.workers)
     elif args.exp == "ablation_probe":
-        run_ablation_command(cfg, raw_dir, fig_dir, kind="probe")
+        run_ablation_command(cfg, raw_dir, fig_dir, kind="probe", workers=args.workers)
     elif args.exp == "ablation_stepsize":
-        run_ablation_command(cfg, raw_dir, fig_dir, kind="stepsize")
+        run_ablation_command(
+            cfg,
+            raw_dir,
+            fig_dir,
+            kind="stepsize",
+            workers=args.workers,
+        )
     elif args.exp == "sparsity_scaling":
-        run_sparsity_command(cfg, raw_dir, fig_dir)
+        run_sparsity_command(cfg, raw_dir, fig_dir, args.workers)
     elif args.exp == "noise_robustness":
-        run_noise_command(cfg, raw_dir, fig_dir)
+        run_noise_command(cfg, raw_dir, fig_dir, args.workers)
     elif args.exp == "growing_batch_kkt":
-        run_growing_batch_kkt_command(cfg, raw_dir, fig_dir)
+        run_growing_batch_kkt_command(cfg, raw_dir, fig_dir, args.workers)
     elif args.exp == "csmri_compare":
         run_csmri_compare_command(cfg, raw_dir, fig_dir)
     elif args.exp == "csmri_sampling_sweep":
-        run_csmri_sweep_command(cfg, raw_dir, fig_dir, kind="sampling")
+        run_csmri_sweep_command(
+            cfg,
+            raw_dir,
+            fig_dir,
+            kind="sampling",
+            workers=args.workers,
+        )
     elif args.exp == "csmri_noise_sweep":
-        run_csmri_sweep_command(cfg, raw_dir, fig_dir, kind="noise")
+        run_csmri_sweep_command(
+            cfg,
+            raw_dir,
+            fig_dir,
+            kind="noise",
+            workers=args.workers,
+        )
     elif args.exp == "deconv_compare":
-        run_deconv_command(cfg, raw_dir, fig_dir)
+        run_deconv_command(cfg, raw_dir, fig_dir, args.workers)
     else:
         raise ValueError(f"Unknown experiment: {args.exp}")
 

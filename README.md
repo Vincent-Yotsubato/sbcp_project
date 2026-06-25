@@ -31,6 +31,14 @@ Figures are saved under `results/figures/<experiment_name>/`, while raw JSON out
 ```bash
 python main.py --exp main_compare
 ```
+
+Runs use `--workers auto` by default, so independent trials can use multiple CPU cores. You can also set it explicitly:
+
+```bash
+python main.py --exp main_compare --workers auto
+```
+
+`--workers auto` caps process parallelism conservatively; use `--workers 1` for serial runs.
 Main sparse recovery comparison. Compares AFLBreI with Oracle-LBreI, SGDAS, and RD on the default synthetic sparse inverse problem.
 
 Current configuration:

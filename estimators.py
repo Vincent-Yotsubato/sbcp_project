@@ -52,6 +52,38 @@ def estimate_gradient_batch(
     return g_hat, residual, forward_calls
 
 
+def estimate_gradient_and_q_batch(
+    operator,
+    x: np.ndarray,
+    b: np.ndarray,
+    update_batch_size: int,
+    probe_batch_size: int,
+    sampler: str = "gaussian",
+):
+    n = x.shape[0]
+    residual = operator.forward(x) - b
+    Xi = _sample_isotropic_batch(update_batch_size, n, sampler)
+    Zeta = _sample_isotropic_batch(probe_batch_size, n, sampler)
+    directions = np.vstack([Xi, Zeta])
+
+    if hasattr(operator, "forward_batch"):
+        A_directions = operator.forward_batch(directions)
+    else:
+        A_directions = np.array([operator.forward(direction) for direction in directions])
+    forward_calls = 1 + update_batch_size + probe_batch_size
+
+    A_Xi = A_directions[:update_batch_size]
+    A_Zeta = A_directions[update_batch_size:]
+
+    grad_coeffs = A_Xi @ residual
+    g_hat = (grad_coeffs @ Xi) / update_batch_size
+
+    probe_coeffs = A_Zeta @ residual
+    q_hat = np.sum(probe_coeffs ** 2) / probe_batch_size
+
+    return g_hat, residual, q_hat, forward_calls
+
+
 def estimate_q_from_residual(
     operator,
     residual: np.ndarray,

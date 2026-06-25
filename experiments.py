@@ -1,5 +1,6 @@
 from typing import Dict, List
 import copy
+import os
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -13,7 +14,7 @@ from algorithms import (
     run_sgdas,
     run_rd,
 )
-from estimators import estimate_gradient_batch, estimate_q_from_residual
+from estimators import estimate_gradient_and_q_batch
 from metrics import compute_image_metrics
 from problems import (
     build_sparse_recovery_problem,
@@ -22,6 +23,102 @@ from problems import (
 )
 from utils import set_random_seed
 from regularizers import elastic_net_mirror_map
+
+
+def resolve_num_workers(workers, task_count: int, auto_cap: int = 8) -> int:
+    if task_count <= 1:
+        return 1
+    if workers is None:
+        return 1
+
+    if isinstance(workers, str):
+        value = workers.strip().lower()
+        if value in ("", "1", "serial", "none"):
+            return 1
+        if value == "auto":
+            cpu_count = os.cpu_count() or 1
+            return max(1, min(task_count, cpu_count, auto_cap))
+        num_workers = int(value)
+    else:
+        num_workers = int(workers)
+
+    if num_workers < 1:
+        raise ValueError("workers must be 'auto' or a positive integer")
+    return min(num_workers, task_count)
+
+
+def _map_jobs(func, jobs, workers):
+    jobs = list(jobs)
+    num_workers = resolve_num_workers(workers, len(jobs))
+    if num_workers == 1:
+        return [func(job) for job in jobs]
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        return list(executor.map(func, jobs))
+
+
+def _run_one_trial_job(job):
+    cfg, trial_seed = job
+    return run_one_trial(cfg, trial_seed)
+
+
+def _run_sparse_aflbrei_trial_job(job):
+    cfg, trial_seed, verbose = job
+    set_random_seed(trial_seed)
+    problem = build_sparse_recovery_problem(cfg.problem)
+    operator = problem["operator"]
+
+    operator.reset_counters()
+    return run_AFLBreI(
+        operator,
+        problem["b"],
+        problem["x_true"],
+        cfg.AFLBreI,
+        support_tol=cfg.support_tol,
+        verbose=verbose,
+    )
+
+
+def _run_growing_batch_kkt_trial_job(job):
+    cfg, B_final, batch_floor_fraction, clip_step, trial_seed = job
+    set_random_seed(trial_seed)
+    problem = build_sparse_recovery_problem(cfg.problem)
+    operator = problem["operator"]
+    operator.reset_counters()
+
+    hist = _run_AFLBreI_growing_batch_final(
+        operator=operator,
+        b=problem["b"],
+        x_true=problem["x_true"],
+        cfg=cfg.AFLBreI,
+        B_final=B_final,
+        batch_floor_fraction=batch_floor_fraction,
+        clip_step=clip_step,
+    )
+    dual_metrics = _row_space_distance_metrics(problem["A"], hist["z_final"])
+    return {
+        "final_gap": hist["final_gap"],
+        "dual_range_violation": dual_metrics["dual_range_violation"],
+        "relative_dual_range_violation": dual_metrics["relative_dual_range_violation"],
+        "z_norm_sq": dual_metrics["z_norm_sq"],
+        "forward_calls": hist["forward_calls"],
+        "mean_update_batch_size": hist["mean_update_batch_size"],
+        "clipped_fraction": hist["clipped_fraction"],
+    }
+
+
+def _run_single_rays_job(job):
+    rays, cfg = job
+    return _run_single_rays(rays, cfg)
+
+
+def _run_single_snr_job(job):
+    snr, cfg = job
+    return _run_single_snr(snr, cfg)
+
+
+def _run_deconv_trial_job(job):
+    cfg, trial_seed = job
+    return run_deconv_trial(cfg, trial_seed=trial_seed)
 
 
 def average_histories(histories: List[Dict]) -> Dict:
@@ -114,9 +211,13 @@ def run_one_trial(cfg, trial_seed: int) -> Dict:
     return results
 
 
-def run_main_compare(cfg) -> Dict:
+def run_main_compare(cfg, workers=1) -> Dict:
     trial_seeds = [cfg.problem.seed + t for t in range(cfg.num_trials)]
-    trial_results = [run_one_trial(cfg, seed) for seed in trial_seeds]
+    trial_results = _map_jobs(
+        _run_one_trial_job,
+        [(cfg, seed) for seed in trial_seeds],
+        workers,
+    )
 
     summary = {}
     for method in ["AFLBreI", "Oracle-LBreI", "SGDAS", "RD"]:
@@ -126,7 +227,12 @@ def run_main_compare(cfg) -> Dict:
     return {"trial_results": trial_results, "summary": summary}
 
 
-def run_batch_ablation(cfg, batch_sizes=(1, 16, 32, 64), max_budget=136000) -> Dict:
+def run_batch_ablation(
+    cfg,
+    batch_sizes=(1, 16, 32, 64),
+    max_budget=136000,
+    workers=1,
+) -> Dict:
     out = {}
     for B in batch_sizes:
         cfg_local = copy.deepcopy(cfg)
@@ -135,21 +241,12 @@ def run_batch_ablation(cfg, batch_sizes=(1, 16, 32, 64), max_budget=136000) -> D
         calls_per_iter = 1 + B + cfg_local.AFLBreI.q_batch_size
         cfg_local.AFLBreI.num_iters = max(1, max_budget // calls_per_iter)
 
-        trials = []
-        for t in range(cfg_local.num_trials):
-            set_random_seed(cfg_local.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg_local.problem)
-            operator = problem["operator"]
-
-            operator.reset_counters()
-            hist = run_AFLBreI(
-                operator,
-                problem["b"],
-                problem["x_true"],
-                cfg_local.AFLBreI,
-                support_tol=cfg_local.support_tol,
-            )
-            trials.append(hist)
+        trial_seeds = [cfg_local.problem.seed + t for t in range(cfg_local.num_trials)]
+        trials = _map_jobs(
+            _run_sparse_aflbrei_trial_job,
+            [(cfg_local, seed, False) for seed in trial_seeds],
+            workers,
+        )
 
         out[f"B={B}"] = average_histories(trials)
     return out
@@ -160,6 +257,7 @@ def run_probe_ablation(
     probe_batch_sizes=(1, 4, 8, 16, 32, 64),
     max_budget=136000,
     beta_min=0.25,
+    workers=1,
 ) -> Dict:
     out = {}
     for M in probe_batch_sizes:
@@ -170,21 +268,12 @@ def run_probe_ablation(
         calls_per_iter = 1 + cfg_local.AFLBreI.batch_size + M
         cfg_local.AFLBreI.num_iters = max(1, max_budget // calls_per_iter)
 
-        trials = []
-        for t in range(cfg_local.num_trials):
-            set_random_seed(cfg_local.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg_local.problem)
-            operator = problem["operator"]
-
-            operator.reset_counters()
-            hist = run_AFLBreI(
-                operator,
-                problem["b"],
-                problem["x_true"],
-                cfg_local.AFLBreI,
-                support_tol=cfg_local.support_tol,
-            )
-            trials.append(hist)
+        trial_seeds = [cfg_local.problem.seed + t for t in range(cfg_local.num_trials)]
+        trials = _map_jobs(
+            _run_sparse_aflbrei_trial_job,
+            [(cfg_local, seed, False) for seed in trial_seeds],
+            workers,
+        )
 
         out[f"M={M}"] = average_histories(trials)
     return out
@@ -194,6 +283,7 @@ def run_stepsize_ablation(
     cfg,
     betas=(0.25, 0.5, 0.8, 1.0, 1.5, 2.0),
     verbose=True,
+    workers=1,
 ) -> Dict:
     out = {}
 
@@ -207,58 +297,46 @@ def run_stepsize_ablation(
         cfg_local.AFLBreI.beta = beta
         cfg_local.AFLBreI.record_every = 10
 
-        trials = []
-        for t in range(cfg_local.num_trials):
-            set_random_seed(cfg_local.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg_local.problem)
-            operator = problem["operator"]
-
-            operator.reset_counters()
-            hist = run_AFLBreI(
-                operator,
-                problem["b"],
-                problem["x_true"],
-                cfg_local.AFLBreI,
-                support_tol=cfg_local.support_tol,
-                verbose=False,
-            )
-            trials.append(hist)
+        trial_seeds = [cfg_local.problem.seed + t for t in range(cfg_local.num_trials)]
+        trials = _map_jobs(
+            _run_sparse_aflbrei_trial_job,
+            [(cfg_local, seed, False) for seed in trial_seeds],
+            workers,
+        )
 
         out[f"beta={beta:.3g}"] = average_histories(trials)
 
     return out
 
 
-def run_sparsity_scaling_experiment(cfg, sparsities=(10, 20, 30, 40)) -> Dict:
+def run_sparsity_scaling_experiment(
+    cfg,
+    sparsities=(10, 20, 30, 40),
+    workers=1,
+) -> Dict:
     out = {}
     for s in sparsities:
         cfg_local = copy.deepcopy(cfg)
         cfg_local.problem.s = s
         cfg_local.AFLBreI.record_every = 10
 
-        trials = []
-        for t in range(cfg_local.num_trials):
-            set_random_seed(cfg_local.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg_local.problem)
-            operator = problem["operator"]
-
-            operator.reset_counters()
-            hist = run_AFLBreI(
-                operator,
-                problem["b"],
-                problem["x_true"],
-                cfg_local.AFLBreI,
-                support_tol=cfg_local.support_tol,
-                verbose=False,
-            )
-            trials.append(hist)
+        trial_seeds = [cfg_local.problem.seed + t for t in range(cfg_local.num_trials)]
+        trials = _map_jobs(
+            _run_sparse_aflbrei_trial_job,
+            [(cfg_local, seed, False) for seed in trial_seeds],
+            workers,
+        )
 
         out[f"s={s}"] = average_histories(trials)
 
     return out
 
 
-def run_noise_robustness_experiment(cfg, snr_levels=(20, 30, 40, None)) -> Dict:
+def run_noise_robustness_experiment(
+    cfg,
+    snr_levels=(20, 30, 40, None),
+    workers=1,
+) -> Dict:
     out = {}
     for snr in snr_levels:
         cfg_local = copy.deepcopy(cfg)
@@ -266,22 +344,12 @@ def run_noise_robustness_experiment(cfg, snr_levels=(20, 30, 40, None)) -> Dict:
         cfg_local.problem.noise_sigma = None
         label = f"SNR={snr}dB" if snr is not None else "SNR=inf (Noiseless)"
 
-        trials = []
-        for t in range(cfg_local.num_trials):
-            set_random_seed(cfg_local.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg_local.problem)
-            operator = problem["operator"]
-
-            operator.reset_counters()
-            hist = run_AFLBreI(
-                operator,
-                problem["b"],
-                problem["x_true"],
-                cfg_local.AFLBreI,
-                support_tol=cfg_local.support_tol,
-                verbose=False,
-            )
-            trials.append(hist)
+        trial_seeds = [cfg_local.problem.seed + t for t in range(cfg_local.num_trials)]
+        trials = _map_jobs(
+            _run_sparse_aflbrei_trial_job,
+            [(cfg_local, seed, False) for seed in trial_seeds],
+            workers,
+        )
 
         out[label] = average_histories(trials)
     return out
@@ -345,6 +413,18 @@ def _run_AFLBreI_growing_batch_final(
     cumulative_forward_calls = 0
     clipped_steps = 0
     batch_sizes = []
+    safe_step_cache = {}
+
+    def get_safe_step(B_k: int) -> float:
+        if B_k not in safe_step_cache:
+            safe_step_cache[B_k] = theory_safe_step(
+                operator=operator,
+                n=n,
+                sampler=cfg.sampler,
+                B=B_k,
+                rho=cfg.step_safety,
+            )
+        return safe_step_cache[B_k]
 
     for k in range(K):
         B_k = _scaled_growing_batch_size(
@@ -354,11 +434,12 @@ def _run_AFLBreI_growing_batch_final(
             floor_fraction=batch_floor_fraction,
         )
         batch_sizes.append(B_k)
-        g_hat, residual, used_calls = estimate_gradient_batch(
+        g_hat, residual, q_hat, used_calls = estimate_gradient_and_q_batch(
             operator=operator,
             x=x,
             b=b,
-            batch_size=B_k,
+            update_batch_size=B_k,
+            probe_batch_size=cfg.q_batch_size,
             sampler=cfg.sampler,
         )
         cumulative_forward_calls += used_calls
@@ -366,25 +447,10 @@ def _run_AFLBreI_growing_batch_final(
         f_x = least_squares_objective_from_residual(residual)
         gap = max(f_x - cfg.f_star, cfg.eps_gap)
 
-        q_hat, q_calls = estimate_q_from_residual(
-            operator=operator,
-            residual=residual,
-            n=n,
-            batch_size=cfg.q_batch_size,
-            sampler=cfg.sampler,
-        )
-        cumulative_forward_calls += q_calls
-
         cB = batch_curvature_factor(n=n, sampler=cfg.sampler, B=B_k)
         raw_step = cfg.beta * (cfg.mu * gap) / (cB * max(q_hat, cfg.eps_denom))
         if clip_step:
-            safe_step = theory_safe_step(
-                operator=operator,
-                n=n,
-                sampler=cfg.sampler,
-                B=B_k,
-                rho=cfg.step_safety,
-            )
+            safe_step = get_safe_step(B_k)
             step = min(raw_step, safe_step)
             clipped_steps += int(raw_step > safe_step)
         else:
@@ -414,6 +480,7 @@ def run_growing_batch_kkt_experiment(
     final_batch_sizes=(50, 100, 200, 500),
     batch_floor_fraction=0.5,
     clip_step=True,
+    workers=1,
 ) -> Dict:
     out = {
         "B_final": [],
@@ -447,30 +514,24 @@ def run_growing_batch_kkt_experiment(
         mean_batch_sizes = []
         clipped_fractions = []
 
-        for t in range(cfg.num_trials):
-            set_random_seed(cfg.problem.seed + t)
-            problem = build_sparse_recovery_problem(cfg.problem)
-            operator = problem["operator"]
-            operator.reset_counters()
+        trial_seeds = [cfg.problem.seed + t for t in range(cfg.num_trials)]
+        trial_metrics = _map_jobs(
+            _run_growing_batch_kkt_trial_job,
+            [
+                (cfg, B_final, batch_floor_fraction, clip_step, seed)
+                for seed in trial_seeds
+            ],
+            workers,
+        )
 
-            hist = _run_AFLBreI_growing_batch_final(
-                operator=operator,
-                b=problem["b"],
-                x_true=problem["x_true"],
-                cfg=cfg.AFLBreI,
-                B_final=B_final,
-                batch_floor_fraction=batch_floor_fraction,
-                clip_step=clip_step,
-            )
-
-            dual_metrics = _row_space_distance_metrics(problem["A"], hist["z_final"])
-            gaps.append(hist["final_gap"])
-            violations.append(dual_metrics["dual_range_violation"])
-            relative_violations.append(dual_metrics["relative_dual_range_violation"])
-            z_norms.append(dual_metrics["z_norm_sq"])
-            forward_calls.append(hist["forward_calls"])
-            mean_batch_sizes.append(hist["mean_update_batch_size"])
-            clipped_fractions.append(hist["clipped_fraction"])
+        for metrics in trial_metrics:
+            gaps.append(metrics["final_gap"])
+            violations.append(metrics["dual_range_violation"])
+            relative_violations.append(metrics["relative_dual_range_violation"])
+            z_norms.append(metrics["z_norm_sq"])
+            forward_calls.append(metrics["forward_calls"])
+            mean_batch_sizes.append(metrics["mean_update_batch_size"])
+            clipped_fractions.append(metrics["clipped_fraction"])
 
         out["B_final"].append(int(B_final))
         out["final_gap_mean"].append(float(np.mean(gaps)))
@@ -579,13 +640,11 @@ def _run_single_rays(rays, cfg):
     return f"rays={rays}", summarize_csmri_trials(trials)
 
 
-def run_csmri_sampling_sweep(cfg, rays_list=(16, 24, 30, 40)) -> Dict:
+def run_csmri_sampling_sweep(cfg, rays_list=(16, 24, 30, 40), workers=1) -> Dict:
     out = {}
-    with ProcessPoolExecutor() as executor:
-        futures = [executor.submit(_run_single_rays, r, cfg) for r in rays_list]
-        for future in futures:
-            key, value = future.result()
-            out[key] = value
+    results = _map_jobs(_run_single_rays_job, [(r, cfg) for r in rays_list], workers)
+    for key, value in results:
+        out[key] = value
     return out
 
 
@@ -608,13 +667,11 @@ def _run_single_snr(snr, cfg):
     return label, summarize_csmri_trials(trials)
 
 
-def run_csmri_noise_sweep(cfg, snr_list=(20.0, 30.0, 40.0, None)) -> Dict:
+def run_csmri_noise_sweep(cfg, snr_list=(20.0, 30.0, 40.0, None), workers=1) -> Dict:
     out = {}
-    with ProcessPoolExecutor() as executor:
-        futures = [executor.submit(_run_single_snr, snr, cfg) for snr in snr_list]
-        for future in futures:
-            key, value = future.result()
-            out[key] = value
+    results = _map_jobs(_run_single_snr_job, [(snr, cfg) for snr in snr_list], workers)
+    for key, value in results:
+        out[key] = value
     return out
 
 
@@ -656,10 +713,13 @@ def run_deconv_trial(cfg, trial_seed: int) -> Dict:
     return results
 
 
-def run_deconv_compare(cfg) -> Dict:
-    trial_results = []
-    for t in range(cfg.num_trials):
-        trial_results.append(run_deconv_trial(cfg, trial_seed=cfg.problem.seed + t))
+def run_deconv_compare(cfg, workers=1) -> Dict:
+    trial_seeds = [cfg.problem.seed + t for t in range(cfg.num_trials)]
+    trial_results = _map_jobs(
+        _run_deconv_trial_job,
+        [(cfg, seed) for seed in trial_seeds],
+        workers,
+    )
 
     summary = {}
     for method in ["AFLBreI", "Oracle-LBreI", "SGDAS", "RD"]:

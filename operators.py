@@ -29,6 +29,7 @@ class MatrixOperator(LinearOperator):
     def __post_init__(self):
         self.forward_calls = 0
         self.adjoint_calls = 0
+        self._spectral_norm_cache = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         if self.track_calls:
@@ -54,7 +55,9 @@ class MatrixOperator(LinearOperator):
         self.adjoint_calls = 0
 
     def spectral_norm_estimate(self) -> float:
-        return np.linalg.norm(self.A, ord=2)
+        if self._spectral_norm_cache is None:
+            self._spectral_norm_cache = float(np.linalg.norm(self.A, ord=2))
+        return self._spectral_norm_cache
 
 
 class CSMRIWaveletOperator(LinearOperator):
@@ -149,6 +152,7 @@ class Convolution1DOperator(LinearOperator):
         self.forward_calls = 0
         self.adjoint_calls = 0
         self.kernel_flip = self.kernel[::-1].copy()
+        self._spectral_norm_cache = None
 
     def forward(self, x: np.ndarray) -> np.ndarray:
         if self.track_calls:
@@ -158,7 +162,7 @@ class Convolution1DOperator(LinearOperator):
     def forward_batch(self, X: np.ndarray) -> np.ndarray:
         if self.track_calls:
             self.forward_calls += X.shape[0]
-        return np.array([convolve(x, self.kernel, mode="same") for x in X])
+        return convolve(X, self.kernel[None, :], mode="same")
 
     def adjoint(self, y: np.ndarray) -> np.ndarray:
         if self.track_calls:
@@ -174,4 +178,8 @@ class Convolution1DOperator(LinearOperator):
         self.adjoint_calls = 0
 
     def spectral_norm_estimate(self) -> float:
-        return float(np.max(np.abs(np.fft.fft(self.kernel, n=self.n))))
+        if self._spectral_norm_cache is None:
+            self._spectral_norm_cache = float(
+                np.max(np.abs(np.fft.fft(self.kernel, n=self.n)))
+            )
+        return self._spectral_norm_cache

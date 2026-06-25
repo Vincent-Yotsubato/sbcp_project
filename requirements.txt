@@ -1,4 +1,5 @@
-pip install PyWavelets scikit-image
+numpy
+matplotlib
+scipy
 PyWavelets
 scikit-image
-scipy
