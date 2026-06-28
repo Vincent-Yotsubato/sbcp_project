@@ -46,6 +46,7 @@ Current configuration:
 - Problem: Gaussian synthetic sparse recovery, `m=600`, `n=1200`, sparsity `s=20`, `snr_db=40`, normalized columns, `num_trials=10`, `support_tol=1e-2`.
 - AFLBreI: `lambda=3.8`, `mu=1.0`, `K=2600`, update batch `B=32`, probe batch `M=8`, `beta=0.99`, Gaussian directions, `f_star=0`, `clip_step=False`, `growing_batch=False`, `return_average=False`, `record_every=1`.
 - Forward-call budget: AFLBreI uses approximately `2600 * (1 + 32 + 8) = 106600` forward calls.
+- Reporting convention: `forward_calls` counts algorithmic forward evaluations only; additional forward evaluations used solely to record synchronized metrics are stored separately as `eval_forward_calls`.
 - Baselines: Oracle-LBreI uses `K=106600`, `lambda=3.8`, `beta=0.99`, exact-gradient Polyak step, `record_every=1`; SGDAS and RD use `K=53300`, `record_every=1`, matching the same forward-call budget because they use about two forward calls per iteration.
 
 ```bash
@@ -56,7 +57,7 @@ Batch-size ablation for AFLBreI. Varies the AFLBreI update batch size `B` and co
 Current configuration:
 - Problem: same synthetic setting as `main_compare`, with `num_trials=10`.
 - Varied parameter: update batch `B in {1, 16, 32, 64}`.
-- Fixed AFLBreI parameters: `lambda=3.8`, `M=8`, `beta=1.0`, Gaussian directions, `clip_step=False`.
+- Fixed AFLBreI parameters: `lambda=3.8`, `M=8`, `beta=0.99`, Gaussian directions, `clip_step=False`.
 - Budget rule: `max_budget=136000` forward calls approximately, with `K = floor(136000 / (1 + B + M))` for each `B`.
 - Recording: `record_every=20`.
 
@@ -67,10 +68,9 @@ Probe batch-size ablation for AFLBreI. Varies the probe batch size `M` (`q_batch
 
 Current configuration:
 - Problem: same synthetic setting as `main_compare`, with `num_trials=10`.
-- Varied parameter: probe batch `M in {1, 4, 8, 16, 32, 64}`.
-- Fixed update batch: `B=32`.
-- Beta rule: `beta(M) = max(0.25, 2 - 8/M)`, so the tested values are `0.25, 0.25, 1.0, 1.5, 1.75, 1.875`.
-- Stability setting: `clip_step=True` only for this probe ablation.
+- Varied parameter: probe batch `M in {8, 16, 32, 64}`.
+- Fixed update batch and stepsize scale: `B=32`, `beta=0.99`.
+- Stability setting: `clip_step=False`, so this is a single-factor probe-batch ablation.
 - Budget rule: `max_budget=136000` forward calls approximately, with `K = floor(136000 / (1 + B + M))` for each `M`.
 - Recording: `record_every=20`.
 
@@ -81,7 +81,7 @@ AFLBreI stepsize-scale ablation. Varies the sample-splitting Polyak scale parame
 
 Current configuration:
 - Problem: same synthetic setting as `main_compare`, with `num_trials=10`.
-- Varied parameter: `beta in {0.25, 0.5, 0.8, 1.0, 1.5, 2.0}`.
+- Varied parameter: `beta in {0.25, 0.5, 0.8, 0.95, 0.99}`.
 - Fixed AFLBreI parameters: `lambda=3.8`, `K=2600`, `B=32`, `M=8`, Gaussian directions, `clip_step=False`.
 - Recording: `record_every=10`.
 
@@ -93,7 +93,7 @@ Sparsity scaling experiment. Tests AFLBreI performance as the true signal sparsi
 Current configuration:
 - Problem: Gaussian synthetic sparse recovery with `m=600`, `n=1200`, `snr_db=40`, normalized columns, `num_trials=10`.
 - Varied parameter: sparsity `s in {10, 20, 30, 40}`.
-- AFLBreI: `lambda=3.8`, `K=2600`, `B=32`, `M=8`, `beta=1.0`, Gaussian directions, `clip_step=False`.
+- AFLBreI: `lambda=3.8`, `K=2600`, `B=32`, `M=8`, `beta=0.99`, Gaussian directions, `clip_step=False`.
 - Recording: `record_every=10`.
 
 ```bash
@@ -104,7 +104,7 @@ Noise robustness experiment. Tests AFLBreI under different measurement SNR level
 Current configuration:
 - Problem: Gaussian synthetic sparse recovery with `m=600`, `n=1200`, sparsity `s=20`, normalized columns, `num_trials=10`.
 - Varied parameter: `snr_db in {20, 30, 40, None}`, where `None` is noiseless.
-- AFLBreI: `lambda=3.8`, `K=2600`, `B=32`, `M=8`, `beta=1.0`, Gaussian directions, `clip_step=False`.
+- AFLBreI: `lambda=3.8`, `K=2600`, `B=32`, `M=8`, `beta=0.99`, Gaussian directions, `clip_step=False`.
 - Recording: `record_every=10`.
 
 ```bash

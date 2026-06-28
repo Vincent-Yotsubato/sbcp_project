@@ -61,6 +61,7 @@ def init_history():
         "exact_support": [],
         "nnz": [],
         "forward_calls": [],
+        "eval_forward_calls": [],
         "time_sec": [],
         "tp": [],
         "fp": [],
@@ -89,6 +90,7 @@ def append_history(
     tol,
     cumulative_forward_calls,
     elapsed,
+    cumulative_eval_forward_calls=0,
     step_size=None,
     raw_step=None,
     was_clipped=None,
@@ -135,6 +137,7 @@ def append_history(
     history["fp"].append(m["fp"])
     history["fn"].append(m["fn"])
     history["forward_calls"].append(cumulative_forward_calls)
+    history["eval_forward_calls"].append(cumulative_eval_forward_calls)
     history["time_sec"].append(elapsed)
 
     history["x_final"] = x.copy()
@@ -181,6 +184,7 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
 
     history = init_history()
     cumulative_forward_calls = 0
+    cumulative_eval_forward_calls = 0
     t0 = time.perf_counter()
 
     B_final = cfg.batch_size
@@ -225,6 +229,13 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
         print("f_star =", cfg.f_star)
         print()
 
+    last_step = None
+    last_raw_step = None
+    last_was_clipped = None
+    last_safe_step_ref = None
+    last_q_hat = None
+    last_recorded_iter = None
+
     for k in range(cfg.num_iters):
         B_k = current_batch_size(k)
         M_k = current_probe_batch_size(B_k)
@@ -255,6 +266,11 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
         z = z - step * g_hat
         x = elastic_net_mirror_map(z, lam=cfg.lam, mu=cfg.mu)
         x_sum += x
+        last_step = step
+        last_raw_step = raw_step
+        last_was_clipped = was_clipped
+        last_safe_step_ref = safe_step_ref
+        last_q_hat = float(q_hat)
 
         if should_record:
             elapsed = time.perf_counter() - t0
@@ -262,20 +278,20 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
             if getattr(cfg, "return_average", False):
                 x_eval = x_sum / (k + 1)
                 z_eval = None
-                residual_eval = operator.forward(x_eval) - b
-                cumulative_forward_calls += 1
-                f_eval = least_squares_objective_from_residual(residual_eval)
-                gap_eval = max(f_eval - cfg.f_star, 0.0)
             else:
                 x_eval = x
                 z_eval = z
-                residual_eval = residual
-                f_eval = f_x
-                gap_eval = max(f_x - cfg.f_star, 0.0)
+
+            residual_eval = operator.forward(x_eval) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            gap_eval = max(f_eval - cfg.f_star, 0.0)
 
             if safe_step_ref is None:
                 safe_step_ref = get_safe_step_ref(B_k)
             was_clipped = raw_step > safe_step_ref
+            last_safe_step_ref = safe_step_ref
+            last_was_clipped = was_clipped
 
             append_history(
                 history,
@@ -287,6 +303,7 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
                 tol=support_tol,
                 cumulative_forward_calls=cumulative_forward_calls,
                 elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
                 step_size=step,
                 raw_step=raw_step,
                 was_clipped=was_clipped,
@@ -297,7 +314,56 @@ def run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3, verbose=False) -> Di
                 true_mask=true_mask,
                 x_true_norm=x_true_norm,
             )
+            last_recorded_iter = k
 
+    if cfg.num_iters > 0:
+        if last_recorded_iter != cfg.num_iters - 1:
+            elapsed = time.perf_counter() - t0
+            if getattr(cfg, "return_average", False):
+                x_eval = x_sum / cfg.num_iters
+                z_eval = None
+            else:
+                x_eval = x
+                z_eval = z
+            residual_eval = operator.forward(x_eval) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            gap_eval = max(f_eval - cfg.f_star, 0.0)
+            B_k = current_batch_size(cfg.num_iters - 1)
+            if last_safe_step_ref is None:
+                last_safe_step_ref = get_safe_step_ref(B_k)
+            if last_was_clipped is None and last_raw_step is not None:
+                last_was_clipped = last_raw_step > last_safe_step_ref
+            append_history(
+                history,
+                cfg.num_iters - 1,
+                x_eval,
+                z_eval,
+                residual_eval,
+                x_true,
+                tol=support_tol,
+                cumulative_forward_calls=cumulative_forward_calls,
+                elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
+                step_size=last_step,
+                raw_step=last_raw_step,
+                was_clipped=last_was_clipped,
+                safe_step_ref=last_safe_step_ref,
+                objective=f_eval,
+                gap=gap_eval,
+                q_hat=last_q_hat,
+                true_mask=true_mask,
+                x_true_norm=x_true_norm,
+            )
+        if getattr(cfg, "return_average", False):
+            history["x_final"] = (x_sum / cfg.num_iters).copy()
+            history["z_final"] = None
+        else:
+            history["x_final"] = x.copy()
+            history["z_final"] = z.copy()
+    else:
+        history["x_final"] = x.copy()
+        history["z_final"] = z.copy()
     return history
 
 
@@ -320,7 +386,11 @@ def run_oracle_lbrei(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
 
     history = init_history()
     cumulative_forward_calls = 0
+    cumulative_eval_forward_calls = 0
     t0 = time.perf_counter()
+    last_step = None
+    last_grad_norm_sq = None
+    last_recorded_iter = None
 
     for k in range(cfg.num_iters):
         residual = operator.forward(x) - b
@@ -334,31 +404,71 @@ def run_oracle_lbrei(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
 
         z = z - step * grad
         x = elastic_net_mirror_map(z, lam=cfg.lam, mu=cfg.mu)
+        last_step = step
+        last_grad_norm_sq = grad_norm_sq
 
         if (k % cfg.record_every) == 0:
             elapsed = time.perf_counter() - t0
-            f_eval = least_squares_objective_from_residual(residual)
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            gap_eval = max(f_eval - cfg.f_star, 0.0)
             append_history(
                 history,
                 k,
                 x,
                 z,
-                residual,
+                residual_eval,
                 x_true,
                 tol=support_tol,
                 cumulative_forward_calls=cumulative_forward_calls,
                 elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
                 step_size=step,
                 raw_step=step,
                 was_clipped=False,
                 safe_step_ref=np.nan,
                 objective=f_eval,
-                gap=f_eval,
+                gap=gap_eval,
                 grad_norm_sq=grad_norm_sq,
                 true_mask=true_mask,
                 x_true_norm=x_true_norm,
             )
+            last_recorded_iter = k
 
+    if cfg.num_iters > 0:
+        if last_recorded_iter != cfg.num_iters - 1:
+            elapsed = time.perf_counter() - t0
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            gap_eval = max(f_eval - cfg.f_star, 0.0)
+            append_history(
+                history,
+                cfg.num_iters - 1,
+                x,
+                z,
+                residual_eval,
+                x_true,
+                tol=support_tol,
+                cumulative_forward_calls=cumulative_forward_calls,
+                elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
+                step_size=last_step,
+                raw_step=last_step,
+                was_clipped=False,
+                safe_step_ref=np.nan,
+                objective=f_eval,
+                gap=gap_eval,
+                grad_norm_sq=last_grad_norm_sq,
+                true_mask=true_mask,
+                x_true_norm=x_true_norm,
+            )
+        history["x_final"] = x.copy()
+        history["z_final"] = z.copy()
+    else:
+        history["x_final"] = x.copy()
+        history["z_final"] = z.copy()
     return history
 
 
@@ -370,7 +480,10 @@ def run_sgdas(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
 
     history = init_history()
     cumulative_forward_calls = 0
+    cumulative_eval_forward_calls = 0
     t0 = time.perf_counter()
+    last_step = None
+    last_recorded_iter = None
 
     for k in range(cfg.num_iters):
         step = get_stepsize(k, cfg.step_rule, cfg.step_c0, cfg.step_power)
@@ -383,20 +496,24 @@ def run_sgdas(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
         cumulative_forward_calls += 2
 
         x = x - step * g_hat
+        last_step = step
 
         if (k % cfg.record_every) == 0:
             elapsed = time.perf_counter() - t0
-            f_eval = least_squares_objective_from_residual(residual)
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
             append_history(
                 history,
                 k,
                 x,
                 None,
-                residual,
+                residual_eval,
                 x_true,
                 tol=support_tol,
                 cumulative_forward_calls=cumulative_forward_calls,
                 elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
                 step_size=step,
                 raw_step=step,
                 was_clipped=False,
@@ -406,7 +523,39 @@ def run_sgdas(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
                 true_mask=true_mask,
                 x_true_norm=x_true_norm,
             )
+            last_recorded_iter = k
 
+    if cfg.num_iters > 0:
+        if last_recorded_iter != cfg.num_iters - 1:
+            elapsed = time.perf_counter() - t0
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            append_history(
+                history,
+                cfg.num_iters - 1,
+                x,
+                None,
+                residual_eval,
+                x_true,
+                tol=support_tol,
+                cumulative_forward_calls=cumulative_forward_calls,
+                elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
+                step_size=last_step,
+                raw_step=last_step,
+                was_clipped=False,
+                safe_step_ref=np.nan,
+                objective=f_eval,
+                gap=f_eval,
+                true_mask=true_mask,
+                x_true_norm=x_true_norm,
+            )
+        history["x_final"] = x.copy()
+        history["z_final"] = None
+    else:
+        history["x_final"] = x.copy()
+        history["z_final"] = None
     return history
 
 
@@ -423,7 +572,10 @@ def run_rd(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
 
     history = init_history()
     cumulative_forward_calls = 0
+    cumulative_eval_forward_calls = 0
     t0 = time.perf_counter()
+    last_tau = None
+    last_recorded_iter = None
 
     for k in range(cfg.num_iters):
         residual = operator.forward(x) - b
@@ -434,20 +586,24 @@ def run_rd(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
 
         x = x + tau * xi
         cumulative_forward_calls += 2
+        last_tau = tau
 
         if (k % cfg.record_every) == 0:
             elapsed = time.perf_counter() - t0
-            f_eval = least_squares_objective_from_residual(residual)
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
             append_history(
                 history,
                 k,
                 x,
                 None,
-                residual,
+                residual_eval,
                 x_true,
                 tol=support_tol,
                 cumulative_forward_calls=cumulative_forward_calls,
                 elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
                 step_size=tau,
                 raw_step=tau,
                 was_clipped=False,
@@ -457,5 +613,37 @@ def run_rd(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
                 true_mask=true_mask,
                 x_true_norm=x_true_norm,
             )
+            last_recorded_iter = k
 
+    if cfg.num_iters > 0:
+        if last_recorded_iter != cfg.num_iters - 1:
+            elapsed = time.perf_counter() - t0
+            residual_eval = operator.forward(x) - b
+            cumulative_eval_forward_calls += 1
+            f_eval = least_squares_objective_from_residual(residual_eval)
+            append_history(
+                history,
+                cfg.num_iters - 1,
+                x,
+                None,
+                residual_eval,
+                x_true,
+                tol=support_tol,
+                cumulative_forward_calls=cumulative_forward_calls,
+                elapsed=elapsed,
+                cumulative_eval_forward_calls=cumulative_eval_forward_calls,
+                step_size=last_tau,
+                raw_step=last_tau,
+                was_clipped=False,
+                safe_step_ref=np.nan,
+                objective=f_eval,
+                gap=f_eval,
+                true_mask=true_mask,
+                x_true_norm=x_true_norm,
+            )
+        history["x_final"] = x.copy()
+        history["z_final"] = None
+    else:
+        history["x_final"] = x.copy()
+        history["z_final"] = None
     return history

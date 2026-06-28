@@ -141,11 +141,13 @@ def get_experiment_config(exp_name: str) -> ExperimentConfig:
 
     if exp_name == "ablation_batch":
         cfg.num_trials = 10
+        cfg.AFLBreI.beta = 0.99
         return cfg
 
     if exp_name == "ablation_probe":
         cfg.num_trials = 10
         cfg.AFLBreI.batch_size = 32
+        cfg.AFLBreI.beta = 0.99
         cfg.AFLBreI.record_every = 20
         return cfg
 
@@ -159,6 +161,7 @@ def get_experiment_config(exp_name: str) -> ExperimentConfig:
         cfg.num_trials = 10
         cfg.AFLBreI.num_iters = 2600
         cfg.AFLBreI.batch_size = 32
+        cfg.AFLBreI.beta = 0.99
         cfg.AFLBreI.record_every = 10
         return cfg
 
@@ -169,6 +172,7 @@ def get_experiment_config(exp_name: str) -> ExperimentConfig:
         cfg.problem.s = 20
         cfg.AFLBreI.num_iters = 2600
         cfg.AFLBreI.batch_size = 32
+        cfg.AFLBreI.beta = 0.99
         cfg.AFLBreI.record_every = 10
         return cfg
 

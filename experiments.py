@@ -141,6 +141,7 @@ def average_histories(histories: List[Dict]) -> Dict:
         "exact_support",
         "nnz",
         "forward_calls",
+        "eval_forward_calls",
         "time_sec",
         "tp",
         "fp",
@@ -263,17 +264,15 @@ def run_batch_ablation(
 
 def run_probe_ablation(
     cfg,
-    probe_batch_sizes=(1, 4, 8, 16, 32, 64),
+    probe_batch_sizes=(8, 16, 32, 64),
     max_budget=136000,
-    beta_min=0.25,
     workers=1,
 ) -> Dict:
     out = {}
     for M in probe_batch_sizes:
         cfg_local = copy.deepcopy(cfg)
         cfg_local.AFLBreI.q_batch_size = M
-        cfg_local.AFLBreI.beta = max(beta_min, 2.0 - 8.0 / M)
-        cfg_local.AFLBreI.clip_step = True
+        cfg_local.AFLBreI.clip_step = False
         calls_per_iter = 1 + cfg_local.AFLBreI.batch_size + M
         cfg_local.AFLBreI.num_iters = max(1, max_budget // calls_per_iter)
 
@@ -290,7 +289,7 @@ def run_probe_ablation(
 
 def run_stepsize_ablation(
     cfg,
-    betas=(0.25, 0.5, 0.8, 1.0, 1.5, 2.0),
+    betas=(0.25, 0.5, 0.8, 0.95, 0.99),
     verbose=True,
     workers=1,
 ) -> Dict:

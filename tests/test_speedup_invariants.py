@@ -113,6 +113,94 @@ class SpeedupInvariantTests(unittest.TestCase):
         self.assertEqual(len(history["safe_step_ref"]), 3)
         self.assertEqual(operator.spectral_norm_calls, 1)
 
+    def test_recorded_residual_matches_recorded_aflbrei_state(self):
+        rng = np.random.default_rng(246)
+        A = rng.normal(size=(5, 7))
+        x_true = np.zeros(7)
+        x_true[[1, 5]] = [1.0, -0.7]
+        b = A @ x_true
+        operator = MatrixOperator(A)
+        cfg = SimpleNamespace(
+            lam=0.1,
+            mu=1.0,
+            num_iters=1,
+            batch_size=2,
+            sampler="gaussian",
+            step_safety=0.5,
+            record_every=1,
+            return_average=False,
+            beta=0.99,
+            q_batch_size=2,
+            f_star=0.0,
+            eps_denom=1e-12,
+            eps_gap=1e-12,
+            clip_step=False,
+            growing_batch=False,
+            batch_floor_fraction=0.5,
+            grow_probe_with_batch=False,
+            probe_batch_ratio=1.0,
+        )
+
+        np.random.seed(135)
+        history = run_AFLBreI(operator, b, x_true, cfg, support_tol=1e-3)
+
+        residual_norm = np.linalg.norm(A @ history["x_final"] - b)
+        self.assertAlmostEqual(history["residual"][0], residual_norm)
+        self.assertEqual(history["forward_calls"][0], 1 + cfg.batch_size + cfg.q_batch_size)
+        self.assertEqual(history["eval_forward_calls"][0], 1)
+
+    def test_aflbrei_final_iterate_is_true_last_iterate_when_not_recorded(self):
+        rng = np.random.default_rng(975)
+        A = rng.normal(size=(5, 8))
+        x_true = np.zeros(8)
+        x_true[[2, 6]] = [0.9, -1.1]
+        b = A @ x_true
+
+        def make_cfg(record_every):
+            return SimpleNamespace(
+                lam=0.1,
+                mu=1.0,
+                num_iters=5,
+                batch_size=2,
+                sampler="gaussian",
+                step_safety=0.5,
+                record_every=record_every,
+                return_average=False,
+                beta=0.99,
+                q_batch_size=2,
+                f_star=0.0,
+                eps_denom=1e-12,
+                eps_gap=1e-12,
+                clip_step=False,
+                growing_batch=False,
+                batch_floor_fraction=0.5,
+                grow_probe_with_batch=False,
+                probe_batch_ratio=1.0,
+            )
+
+        np.random.seed(864)
+        full_history = run_AFLBreI(
+            MatrixOperator(A.copy()),
+            b,
+            x_true,
+            make_cfg(record_every=1),
+            support_tol=1e-3,
+        )
+
+        np.random.seed(864)
+        sparse_history = run_AFLBreI(
+            MatrixOperator(A.copy()),
+            b,
+            x_true,
+            make_cfg(record_every=10),
+            support_tol=1e-3,
+        )
+
+        np.testing.assert_allclose(sparse_history["x_final"], full_history["x_final"])
+        np.testing.assert_allclose(sparse_history["z_final"], full_history["z_final"])
+        self.assertEqual(sparse_history["iter"][-1], 4)
+        self.assertEqual(sparse_history["forward_calls"][-1], 5 * (1 + 2 + 2))
+
     def test_parallel_main_compare_matches_serial_on_tiny_config(self):
         cfg = get_experiment_config("main_compare")
         cfg.num_trials = 2
