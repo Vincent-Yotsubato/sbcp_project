@@ -63,10 +63,13 @@ class OracleLBreIConfig:
 class SGDASConfig:
     num_iters: int = 54600
     sampler: str = "gaussian"
-    step_rule: str = "inv_sqrt"
+    record_every: int = 1
+
+    # Deprecated: SGDAS now uses the theory constant step
+    # 1 / ((n + 2) * ||A||^2), computed from the current operator.
+    step_rule: str = "theory_constant"
     step_c0: float = 0.02
     step_power: float = 0.5
-    record_every: int = 1
 
 
 @dataclass

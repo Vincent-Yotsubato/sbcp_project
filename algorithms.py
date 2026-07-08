@@ -40,6 +40,11 @@ def get_decay_stepsize(k: int, alpha: float) -> float:
     return alpha / np.sqrt(k + 1.0)
 
 
+def get_sgdas_stepsize(operator, n: int) -> float:
+    L_sq = operator.spectral_norm_estimate() ** 2
+    return 1.0 / max((n + 2.0) * L_sq, 1e-12)
+
+
 def get_growing_batch_size(j: int, B0: int, Bmax: int, growth_alpha: float) -> int:
     return min(Bmax, int(np.ceil(B0 * ((j + 1.0) ** growth_alpha))))
 
@@ -484,10 +489,9 @@ def run_sgdas(operator, b, x_true, cfg, support_tol=1e-3) -> Dict:
     t0 = time.perf_counter()
     last_step = None
     last_recorded_iter = None
+    step = get_sgdas_stepsize(operator, n)
 
     for k in range(cfg.num_iters):
-        step = get_stepsize(k, cfg.step_rule, cfg.step_c0, cfg.step_power)
-
         residual = operator.forward(x) - b
         xi = sample_isotropic_vector(n, cfg.sampler)
         A_xi = operator.forward(xi)

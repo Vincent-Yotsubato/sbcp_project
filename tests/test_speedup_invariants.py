@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 from scipy.signal import convolve
 
-from algorithms import run_AFLBreI
+from algorithms import get_sgdas_stepsize, run_AFLBreI, run_sgdas
 from config import get_experiment_config
 from estimators import (
     estimate_gradient_and_q_batch,
@@ -78,6 +78,31 @@ class SpeedupInvariantTests(unittest.TestCase):
         actual = operator.forward_batch(X)
 
         np.testing.assert_allclose(actual, expected)
+
+    def test_sgdas_uses_theory_constant_step(self):
+        A = np.array(
+            [
+                [1.0, 0.0, 0.5],
+                [0.0, 2.0, 0.0],
+            ]
+        )
+        x_true = np.array([1.0, 0.0, -1.0])
+        b = A @ x_true
+        operator = MatrixOperator(A)
+        cfg = SimpleNamespace(
+            num_iters=3,
+            sampler="gaussian",
+            record_every=1,
+            step_rule="inv_sqrt",
+            step_c0=999.0,
+            step_power=0.5,
+        )
+
+        expected_step = get_sgdas_stepsize(operator, n=x_true.shape[0])
+        np.random.seed(135)
+        history = run_sgdas(operator, b, x_true, cfg, support_tol=1e-3)
+
+        np.testing.assert_allclose(history["step_size"], expected_step)
 
     def test_safe_step_is_cached_for_unclipped_aflbrei(self):
         rng = np.random.default_rng(789)

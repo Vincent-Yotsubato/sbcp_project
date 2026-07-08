@@ -47,7 +47,7 @@ Current configuration:
 - AFLBreI: `lambda=3.8`, `mu=1.0`, `K=2600`, update batch `B=32`, probe batch `M=8`, `beta=0.99`, Gaussian directions, `f_star=0`, `clip_step=False`, `growing_batch=False`, `return_average=False`, `record_every=1`.
 - Forward-call budget: AFLBreI uses approximately `2600 * (1 + 32 + 8) = 106600` forward calls.
 - Reporting convention: `forward_calls` counts algorithmic forward evaluations only; additional forward evaluations used solely to record synchronized metrics are stored separately as `eval_forward_calls`.
-- Baselines: Oracle-LBreI uses `K=106600`, `lambda=3.8`, `beta=0.99`, exact-gradient Polyak step, `record_every=1`; SGDAS and RD use `K=53300`, `record_every=1`, matching the same forward-call budget because they use about two forward calls per iteration.
+- Baselines: Oracle-LBreI uses `K=106600`, `lambda=3.8`, `beta=0.99`, exact-gradient Polyak step, `record_every=1`; SGDAS uses constant step `1 / ((n + 2) ||A||^2)` and RD uses exact random-direction line search. SGDAS and RD use `K=53300`, `record_every=1`, matching the same forward-call budget because they use about two forward calls per iteration.
 
 ```bash
 python main.py --exp ablation_batch
@@ -162,4 +162,4 @@ Current configuration:
 - AFLBreI: `lambda=10`, `K=20000`, final update batch `B_K=256`, initial update batch about `0.5 B_K`, probe batch lower bound `M=64`, `probe_batch_ratio=0.5`, `beta=1.0`, `f_star=0`, `record_every=10`.
 - AFLBreI stability/schedule: `step_safety=0.75`, `clip_step=True`, `growing_batch=True`, `grow_probe_with_batch=True`.
 - Oracle-LBreI: `lambda=675`, `beta=1.0`, exact-gradient Polyak step, `K=160000`, `record_every=1`.
-- SGDAS and RD: `K=10`, `record_every=1`.
+- SGDAS: `K=10`, constant step `1 / ((n + 2) ||A||^2)`, `record_every=1`; RD: `K=10`, `record_every=1`.
