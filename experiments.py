@@ -239,7 +239,7 @@ def run_main_compare(cfg, workers=1) -> Dict:
 
 def run_batch_ablation(
     cfg,
-    batch_sizes=(1, 16, 32, 64),
+    batch_sizes=(1, 16, 32, 64, 128),
     max_budget=136000,
     workers=1,
 ) -> Dict:
