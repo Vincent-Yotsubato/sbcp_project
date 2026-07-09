@@ -127,7 +127,7 @@ Single CS-MRI reconstruction experiment. Compares AFLBreI and Oracle-LBreI on on
 
 Current configuration:
 - Problem: Shepp-Logan CS-MRI, `img_size=128`, radial rays `30`, Haar wavelet, `snr_db=40`, `num_trials=1`.
-- AFLBreI: `lambda=1.0`, `K=30000`, update batch `B=128`, probe batch `M=32`, `beta=1.0`, `record_every=500`.
+- AFLBreI: `lambda=1.0`, `K=20000`, update batch `B=128`, probe batch `M=32`, `beta=1.0`, `record_every=500`.
 - Oracle-LBreI: `lambda=1.0`, `K=20000`, `beta=1.0`, exact-gradient Polyak step, `record_every=1`.
 
 ```bash

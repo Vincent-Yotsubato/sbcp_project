@@ -203,7 +203,7 @@ def get_experiment_config(exp_name: str) -> ExperimentConfig:
         cfg.AFLBreI.batch_size = 128
         cfg.AFLBreI.beta = 1.0
         cfg.AFLBreI.q_batch_size = 32
-        cfg.AFLBreI.num_iters = 30000
+        cfg.AFLBreI.num_iters = 20000
         cfg.AFLBreI.record_every = 500
 
         cfg.oracle.lam = 1.0
